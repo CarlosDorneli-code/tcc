@@ -1,0 +1,183 @@
+/*
+  Pinos
+  DHT11         ==> 4     D4
+  FLUXO DE AGUA ==> 13    D7
+  BOMBA         ==> 12    D6
+  UMIDADE SOLO  ==> 0     A0
+
+*/
+//Inicio
+#include <ESP8266WiFi.h>
+#include <NTPClient.h>//Biblioteca do NTP.
+#include <WiFiUdp.h>//Biblioteca do UDP.
+WiFiUDP udp;//Cria um objeto "UDP".
+NTPClient ntp(udp, "a.st1.ntp.br", -3 * 3600, 60000);//Cria um objeto "NTP" com as configurações.
+//fim
+#include "DHT.h"
+#include "CTBot.h"
+#define DHTPIN 4//PINO DHT11
+#define PIN 13//PINO 
+CTBot myBot;
+DHT dht(DHTPIN, DHT11);
+
+int quantidade = 50;
+//Definicoes da rede wifi e conexao
+String ssid  = "Rafael"; //Nome da sua rede wifi
+String pass  = "ufpa20142848"; //Senha da sua rede wifi
+String token = "1173932498:AAGxbEFXDjzVU6R8BqqYxTXqI8IibsCmpAw"; //Token bot Telegram
+bool irriga = false;
+//ENDEREÇOS DE REGISTRADORES
+//Pinos dos leds
+#define bomba 12
+float FazLeituraUmidade(void);
+
+String hora;//Váriavel que armazenara o horario do NTP.
+
+void setup()
+{
+  dht.begin();
+  Serial.begin(115200);
+  Serial.println("Inicializando bot Telegram...");
+
+  //Conexao na rede wifi
+  myBot.wifiConnect(ssid, pass);
+
+  //Define o token
+  myBot.setTelegramToken(token);
+
+  //Verifica a conexao
+  if (myBot.testConnection())
+    Serial.println("nConexao Ok!");
+  else
+    Serial.println("nFalha na conexao!");
+
+  //Define os pinos dos leds como saida e apaga os leds
+  pinMode(bomba, OUTPUT);
+  digitalWrite(bomba, HIGH);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin("Rafael", "ufpa20142848");//Conecta ao WiFi.
+  delay(2000);//Espera a conexão.
+
+  ntp.begin();//Inicia o NTP.
+  ntp.forceUpdate();//Força o Update.
+}
+
+void loop()
+{
+  float umidadeSolo = FazLeituraUmidade();
+  float h = dht.readHumidity(); //Umidade
+  float t = dht.readTemperature();//Temperatura
+
+  hora = ntp.getFormattedTime();//Armazena na váriavel HORA, o horario atual.
+  Serial.println(hora);//Printa a hora já formatada no monitor.
+
+  if (hora == "12:00:00" && umidadeSolo < 25) {
+    Serial.println("Irrigar");
+    irrigar(quantidade);
+  }
+
+//  if (hora == "12:00:00" ) {
+//    Serial.println("Irrigar");
+//    irrigar(quantidade);
+//  }
+
+  if (isnan(t) || isnan(h))
+  {
+    Serial.println("Failed to read from DHT");
+  }
+  else
+  {
+    Serial.print("Umidade: ");
+    Serial.print(h);
+    Serial.print(" %t");
+    Serial.print("Temperatura: ");
+    Serial.print(t);
+    Serial.println(" *C");
+  }
+
+  //Variavel que armazena a mensagem recebida
+  TBMessage msg;
+
+  //Verifica se chegou alguma mensagem
+  if (myBot.getNewMessage(msg))
+  {
+    //Verifica se foi recebia a mensagem "Irrigar"
+    if (msg.text.equalsIgnoreCase("Irrigar"))
+    {
+      if ( umidadeSolo <= 25){
+        myBot.sendMessage(msg.sender.id, "Irrigando!");
+        irrigar(quantidade);
+      }
+      else {
+        myBot.sendMessage(msg.sender.id, "A umidade do solo está acima de 25%, não é necessário irrigar agora");
+      }
+    }
+    else if (msg.text.equalsIgnoreCase("Parar"))
+    {
+      myBot.sendMessage(msg.sender.id, "Parou de Irrigar!");
+      digitalWrite(bomba, HIGH);
+
+    }
+    if (msg.text.equalsIgnoreCase("Temperatura"))
+    {
+      myBot.sendMessage(msg.sender.id, String(t) + String("°C"));
+    }
+    if (msg.text.equalsIgnoreCase("Umidade"))
+    {
+      myBot.sendMessage(msg.sender.id, String("Umidade do Ar"));
+      myBot.sendMessage(msg.sender.id, String(h) + String("g/Kg"));
+      myBot.sendMessage(msg.sender.id, String("Umidade do Solo"));
+      float um = FazLeituraUmidade();
+      myBot.sendMessage(msg.sender.id, String(um) + String("%"));
+
+    }
+    if (msg.text.equalsIgnoreCase("Oi"))
+    {
+      myBot.sendMessage(msg.sender.id, String("Olá"));
+    }
+    if (msg.text.equalsIgnoreCase("/start"))
+    {
+      //Caso receba qualquer outro comando, envia uma
+      //mensagem generica/informativa
+      String reply;
+      reply = (String)"Ola " + msg.sender.username + (String)"! Bot Criado Para o TCC do Dorneli \n Digite os Comandos: \n > Temperatura \n > Umidade do Ar \n > Umidade do Solo! \n e Receba seus Respectivos Valores. \n E para Iniciar a Irrigação Digite: \n Irrigar";
+      myBot.sendMessage(msg.sender.id, reply);
+    }
+  }
+  delayMicroseconds(1000);
+}
+float FazLeituraUmidade(void)
+{
+  int ValorADC;
+  float UmidadePercentual;
+  ValorADC = analogRead(0);   //978 -> 3,3V
+  Serial.print("[Leitura ADC] ");
+  Serial.println(ValorADC);
+  UmidadePercentual = 100 * ((978 - (float)ValorADC) / 978);
+  Serial.print("[Umidade Percentual] ");
+  Serial.print(UmidadePercentual);
+  Serial.println("%");
+
+  return UmidadePercentual;
+}
+void irrigar(int quantidade) {
+  Serial.println("Estou Irrigando");
+  digitalWrite(bomba, LOW);
+  float valor = 0;
+  int contaPulso = 0;
+  while ( valor < quantidade) {
+    if (digitalRead(PIN) == 1) {
+      while (digitalRead(PIN) == 1) {
+        delay(1);
+      }
+      contaPulso++;
+    }
+    valor = contaPulso;
+    Serial.println(valor);
+    delay(50);
+  }
+  Serial.println("Pareide Irrigar");
+  digitalWrite(bomba, HIGH);
+  irriga = false;
+}
